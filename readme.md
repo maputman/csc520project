@@ -2,6 +2,9 @@
 
 to install dependencies run this command in your terminal: pip install -r requirements.txt
 
+
+
+DELETE AT THE END:
 (maddie)astar.py — astar(env, start, goal) runs A\* on the active (non-blocked) graph using Euclidean straight-line distance as the admissible heuristic.
 
 replan(env, truck, goal) re-runs A\* from the truck's current node when a road becomes blocked mid-route. path_uses_edge() detects whether a new blockage affects a truck in transit.
