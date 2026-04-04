@@ -2,6 +2,7 @@
 
 to install dependencies run this command in your terminal: pip install -r requirements.txt
 
+update number of trucks, zones, and hubs in scenario.py and then run python3 visualization.py to see the visualization
 
 
 DELETE AT THE END:
@@ -18,3 +19,4 @@ replan(env, truck, goal) re-runs A\* from the truck's current node when a road b
 baselines.py — GreedyBaseline (highest urgency → nearest hub, no constraint awareness) and RandomBaseline (random zone/hub/resource) for benchmarking.
 
 main.py — Run python main.py for a demo, or python main.py benchmark for a side-by-side comparison table of all three strategies.
+
