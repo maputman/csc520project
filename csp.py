@@ -148,21 +148,23 @@ def backtrack(candidates, env):
 
 
 #  CSP entry point
+def solve_csp(env, claimed_zones=None):
+    """
+    Main entry point for the CSP solver.
+    claimed_zones: a set of zone_ids already assigned to another truck this cycle.
+    """
+    if claimed_zones is None:
+        claimed_zones = set()
 
-def solve_csp(env):
-    """
-    called once per planning cycle from the simulation loop
-    returns the best (zone_id, hub_id, resource_type) assignment,
-    or None if no valid dispatch is possible right now.
-    """
-    # build domain of all possible (zone, hub, resource) combos
     candidates = build_domain(env)
 
+    # Exclude zones already claimed by another truck this cycle
+    candidates = [c for c in candidates if c[0] not in claimed_zones]
+
     if not candidates:
-        print("[CSP] No candidates available, all zones served or no inventory")
+        print("  [CSP] No candidates available — all zones served or no inventory.")
         return None
 
-    # run backtracking search with hard + soft constraints
     assignment = backtrack(candidates, env)
 
     if assignment:
@@ -170,10 +172,10 @@ def solve_csp(env):
         zone = env.zones[zone_id]
         score = soft_constraint_score(assignment, env)
         critical_tag = " [CRITICAL]" if zone.is_critical() else ""
-        print(f"[CSP] Best assignment: dispatch {resource} from {hub_id} "
+        print(f"  [CSP] Best assignment: dispatch {resource} from {hub_id} "
               f"to {zone_id} (urgency={zone.urgency}, score={score:.2f}){critical_tag}")
     else:
-        print("[CSP] No valid assignment found after applying hard constraints")
+        print("  [CSP] No valid assignment found after applying hard constraints.")
 
     return assignment
 
@@ -212,6 +214,15 @@ if __name__ == "__main__":
         env.zones[zone_id].update_needs(resource, 1)
         env.tick()
 
+
+    print("\n>>> Planning Cycle 1b (second truck same time as truck one)")
+    claimed = {assignment[0]} if assignment else set()
+    assignment2 = solve_csp(env, claimed_zones=claimed)
+
+    print("\n>>> Planning Cycle 2")
+    assignment = solve_csp(env)
+
+
     print("\n>>> Manually clear all critical zones, then plan again")
     # fully serve Z1 and Z4 to test soft constraints kick in
     env.zones["Z1"].needs = {"water": 0, "food": 0, "medical": 0}
@@ -222,6 +233,7 @@ if __name__ == "__main__":
 
     print("\n>>> Planning Cycle 3 (no more critical zones — soft constraints decide)")
     assignment = solve_csp(env)
+
 
     print("\n=== Final State ===")
     env.print_status()
