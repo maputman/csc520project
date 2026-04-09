@@ -1,4 +1,8 @@
 import math
+from dataclasses import dataclass
+from typing import List
+
+from astar import path_for_dispatch
 
 #  CSP Solver for dispatch ordering
 
@@ -148,7 +152,7 @@ def backtrack(candidates, env):
 
 
 #  CSP entry point
-def solve_csp(env, claimed_zones=None):
+def solve_csp(env, claimed_zones=None, verbose=True):
     """
     Main entry point for the CSP solver.
     claimed_zones: a set of zone_ids already assigned to another truck this cycle.
@@ -162,7 +166,8 @@ def solve_csp(env, claimed_zones=None):
     candidates = [c for c in candidates if c[0] not in claimed_zones]
 
     if not candidates:
-        print("  [CSP] No candidates available — all zones served or no inventory.")
+        if verbose:
+            print("  [CSP] No candidates available — all zones served or no inventory.")
         return None
 
     assignment = backtrack(candidates, env)
@@ -172,12 +177,90 @@ def solve_csp(env, claimed_zones=None):
         zone = env.zones[zone_id]
         score = soft_constraint_score(assignment, env)
         critical_tag = " [CRITICAL]" if zone.is_critical() else ""
-        print(f"  [CSP] Best assignment: dispatch {resource} from {hub_id} "
-              f"to {zone_id} (urgency={zone.urgency}, score={score:.2f}){critical_tag}")
+        if verbose:
+            print(f"  [CSP] Best assignment: dispatch {resource} from {hub_id} "
+                  f"to {zone_id} (urgency={zone.urgency}, score={score:.2f}){critical_tag}")
     else:
-        print("  [CSP] No valid assignment found after applying hard constraints.")
+        if verbose:
+            print("  [CSP] No valid assignment found after applying hard constraints.")
 
     return assignment
+
+
+#  agent integration (CSP + A* path for DisasterReliefAgent)
+
+@dataclass
+class DispatchAssignment:
+    zone: object
+    hub: object
+    resource_type: str
+    amount: int
+    path: List[str]
+
+
+def print_csp_state(env) -> None:
+    n_unserved = len(env.get_unserved_zones())
+    n_crit = len(env.get_critical_zones())
+    n_idle = len(env.get_idle_trucks())
+    print(
+        f"  [CSP] t={env.time_step} | unserved_zones={n_unserved} | "
+        f"critical={n_crit} | idle_trucks={n_idle}"
+    )
+
+
+def _dispatch_amount(zone, resource_type: str) -> int:
+    need = int(zone.needs.get(resource_type, 0))
+    return min(1, need) if need > 0 else 0
+
+
+def solve_next_dispatch(
+    env,
+    max_assignments: int = 1,
+    *,
+    verbose: bool = False,
+) -> List[DispatchAssignment]:
+    """
+    For each idle truck slot (up to ``max_assignments``), run ``solve_csp`` with
+    ``claimed_zones`` so different trucks target different zones when possible,
+    build an A* path hub→zone, and return ``DispatchAssignment`` objects.
+    """
+    n_slots = min(max_assignments, len(env.get_idle_trucks()))
+    if n_slots <= 0:
+        return []
+
+    out: List[DispatchAssignment] = []
+    claimed: set = set()
+
+    for _ in range(n_slots):
+        raw = solve_csp(env, claimed_zones=claimed, verbose=verbose)
+        if not raw:
+            break
+
+        zone_id, hub_id, resource_type = raw
+        zone = env.zones[zone_id]
+        hub = env.hubs[hub_id]
+        amount = _dispatch_amount(zone, resource_type)
+        if amount <= 0:
+            break
+
+        path, cost = path_for_dispatch(env, hub_id, zone_id)
+        if not path or math.isinf(cost):
+            if verbose:
+                print(f"  [CSP] No route from {hub_id} to {zone_id}; stopping multi-plan.")
+            break
+
+        out.append(
+            DispatchAssignment(
+                zone=zone,
+                hub=hub,
+                resource_type=resource_type,
+                amount=amount,
+                path=path,
+            )
+        )
+        claimed.add(zone_id)
+
+    return out
 
 
 #  test
