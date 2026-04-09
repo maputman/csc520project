@@ -1,4 +1,4 @@
-from csp_solver import solve_next_dispatch, print_csp_state
+from csp import solve_next_dispatch, print_csp_state
 from astar import replan, path_uses_edge
 
 
@@ -61,7 +61,9 @@ class DisasterReliefAgent:
             print_csp_state(env)
 
         # --- Step 1: CSP solver picks the best dispatch assignment ----------
-        assignments = solve_next_dispatch(env, max_assignments=len(env.trucks))
+        assignments = solve_next_dispatch(
+            env, max_assignments=len(env.trucks), verbose=self.verbose
+        )
 
         if not assignments:
             if self.verbose:
