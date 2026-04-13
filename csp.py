@@ -264,6 +264,8 @@ def solve_next_dispatch(
 
 
 #  test
+#  Note: solve_next_dispatch is the function used by the agent
+#  solve_csp is a lower-level helper it calls internally
 
 if __name__ == "__main__":
     # Import environment from the same folder
@@ -276,47 +278,30 @@ if __name__ == "__main__":
     print("=== Initial Environment ===")
     env.print_status()
 
-    print(">>> Planning Cycle 1 (Z1 and Z4 are CRITICAL)")
-    assignment = solve_csp(env)
-
-    if assignment:
-        zone_id, hub_id, resource = assignment
-        hub = env.hubs[hub_id]
-        zone = env.zones[zone_id]
-        # simulate the dispatch
-        hub.dispatch(resource, amount=1)
-        zone.update_needs(resource, 1)
-        env.tick()
-
-    print("\n>>> Planning Cycle 2")
-    assignment = solve_csp(env)
-
-    if assignment:
-        zone_id, hub_id, resource = assignment
-        env.hubs[hub_id].dispatch(resource, amount=1)
-        env.zones[zone_id].update_needs(resource, 1)
-        env.tick()
-
-
-    print("\n>>> Planning Cycle 1b (second truck same time as truck one)")
-    claimed = {assignment[0]} if assignment else set()
-    assignment2 = solve_csp(env, claimed_zones=claimed)
-
-    print("\n>>> Planning Cycle 2")
-    assignment = solve_csp(env)
-
-
-    print("\n>>> Manually clear all critical zones, then plan again")
-    # fully serve Z1 and Z4 to test soft constraints kick in
+    print(">>> Cycle 1 — both trucks assigned simultaneously (Z1 and Z4 are CRITICAL)")
+    assignments = solve_next_dispatch(env, max_assignments=2, verbose=True)
+    for a in assignments:
+        a.hub.dispatch(a.resource_type, a.amount)
+        a.zone.update_needs(a.resource_type, a.amount)
+    env.tick()
+ 
+    print("\n>>> Cycle 2 — after first deliveries")
+    assignments = solve_next_dispatch(env, max_assignments=2, verbose=True)
+    for a in assignments:
+        a.hub.dispatch(a.resource_type, a.amount)
+        a.zone.update_needs(a.resource_type, a.amount)
+    env.tick()
+ 
+    print("\n>>> Manually serve all critical zones to test soft constraints")
     env.zones["Z1"].needs = {"water": 0, "food": 0, "medical": 0}
     env.zones["Z1"].served = True
     env.zones["Z4"].needs = {"water": 0, "food": 0, "medical": 0}
     env.zones["Z4"].served = True
     env.zones["Z4"].critical_resource = None
-
-    print("\n>>> Planning Cycle 3 (no more critical zones — soft constraints decide)")
-    assignment = solve_csp(env)
-
-
+ 
+    print("\n>>> Cycle 3 — no critical zones, soft constraints decide")
+    assignments = solve_next_dispatch(env, max_assignments=2, verbose=True)
+ 
     print("\n=== Final State ===")
     env.print_status()
+ 

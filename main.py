@@ -59,7 +59,10 @@ def benchmark():
     print("  RUNNING: CSP + A* Agent")
     print("#" * 60)
     env_agent = make_env()
-    agent = DisasterReliefAgent(env_agent, max_steps=50, verbose=True)
+    agent = DisasterReliefAgent(
+        env_agent, max_steps=50, verbose=True,
+        events=register_events(env_agent)
+    )
     results["CSP + A*"] = agent.run()
 
     # ---- 2. Greedy baseline -----------------------------------------------
@@ -106,7 +109,7 @@ def benchmark():
 
 def demo():
     env = make_env()
-    agent = DisasterReliefAgent(env, max_steps=50, verbose=True)
+    agent = DisasterReliefAgent(env, max_steps=50, verbose=True, events=register_events(env))
     agent.run()
 
 

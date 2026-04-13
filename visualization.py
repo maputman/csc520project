@@ -275,18 +275,253 @@ def tour_path_from_simulation(env: DisasterEnvironment, truck_id: str) -> tuple[
     return result.get("full_node_path") or [], result
 
 
+def run_scenario_animation(env):
+    """
+    Run the CSP + A* agent on env and animate its decisions
+ 
+    Shows:
+      - Trucks (blue dot) moving along A*-computed routes
+      - Zone node colors updating in real time:
+          red   = critical zone (zero supply of a resource)
+          orange = active zone (has unmet needs)
+          green  = served zone (all needs met)
+          blue   = supply hub
+      - Status box showing the current CSP dispatch decision
+      - Path highlight after each delivery completes
+ 
+    Uses a RecordingAgent to run the full simulation first, then
+    replays the recorded dispatch history as an animation.
+    """
+    import copy
+    from agent import DisasterReliefAgent
+ 
+    # Run agent on a deep copy and record every dispatch
+    sim_env = copy.deepcopy(env)
+    dispatch_log = []   # one entry per delivery executed
+ 
+    class _RecordingAgent(DisasterReliefAgent):
+        def _execute_dispatch(self, truck, assignment):
+            dispatch_log.append({
+                "time_step": self.env.time_step,
+                "truck_id":  truck.truck_id,
+                "path":      list(assignment.path),
+                "resource":  assignment.resource_type,
+                "zone_id":   assignment.zone.zone_id,
+                "hub_id":    assignment.hub.hub_id,
+                "amount":    assignment.amount,
+            })
+            super()._execute_dispatch(truck, assignment)
+ 
+    print("[VIZ] Running CSP + A* agent to record dispatch history...")
+    _RecordingAgent(sim_env, max_steps=50, verbose=False).run()
+ 
+    if not dispatch_log:
+        print("[VIZ] No dispatches recorded — nothing to animate")
+        return None
+ 
+    print(f"[VIZ] Recorded {len(dispatch_log)} dispatches — building animation...")
+ 
+    # Replay deliveries on a fresh copy to get zone snapshots
+    # snapshots[i] = zone states AFTER dispatch i-1 (snapshots[0] = initial)
+    snap_env = copy.deepcopy(env)
+ 
+    def _zone_states(e):
+        out = {}
+        for zid, z in e.zones.items():
+            if z.served:
+                out[zid] = "served"
+            elif z.is_critical():
+                out[zid] = "critical"
+            else:
+                out[zid] = "active"
+        return out
+ 
+    snapshots = [_zone_states(snap_env)]
+    for d in dispatch_log:
+        z = snap_env.zones.get(d["zone_id"])
+        h = snap_env.hubs.get(d["hub_id"])
+        if z and h:
+            try:
+                h.dispatch(d["resource"], d["amount"])
+            except Exception:
+                pass
+            z.update_needs(d["resource"], d["amount"])
+        snapshots.append(_zone_states(snap_env))
+ 
+    # Build per-node positions and color helpers
+    G = env.graph
+    node_list = list(G.nodes())
+    pos = {n: (G.nodes[n]["x"], G.nodes[n]["y"]) for n in node_list}
+ 
+    NODE_COLORS = {
+        "hub":      "#aed6f1",   # light blue
+        "critical": "#e74c3c",   # red
+        "active":   "#f0b27a",   # orange
+        "served":   "#58d68d",   # green
+    }
+ 
+    def _node_color_list(state_idx):
+        state = snapshots[min(state_idx, len(snapshots) - 1)]
+        return [
+            NODE_COLORS["hub"] if G.nodes[n]["type"] == "hub"
+            else NODE_COLORS.get(state.get(n, "active"), NODE_COLORS["active"])
+            for n in node_list
+        ]
+ 
+    # Build global frame list
+    # Each frame: truck position + which snapshot to show + status label
+    STEPS_PER_EDGE = 24
+    TRAIL_LEN = 16
+ 
+    global_frames = []   # list of dicts
+ 
+    for di, d in enumerate(dispatch_log):
+        path = d["path"]
+        if len(path) < 2:
+            continue
+ 
+        # Interpolate (x,y) positions along path using node coordinates
+        interp = []
+        for i in range(len(path) - 1):
+            x0, y0 = pos[path[i]]
+            x1, y1 = pos[path[i + 1]]
+            for s in range(STEPS_PER_EDGE):
+                if i > 0 and s == 0:
+                    continue   # avoid duplicate joint points
+                t = s / (STEPS_PER_EDGE - 1)
+                interp.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+ 
+        ph_x = [pos[n][0] for n in path]
+        ph_y = [pos[n][1] for n in path]
+        label = (f"[CSP+A*] t={d['time_step']} | "
+                 f"{d['truck_id']}: {d['resource']} → {d['zone_id']}")
+ 
+        for fi, (x, y) in enumerate(interp):
+            is_last = fi == len(interp) - 1
+            global_frames.append({
+                "x":         x,
+                "y":         y,
+                "state_idx": di + 1 if is_last else di,
+                "label":     label,
+                "ph_x":      ph_x if is_last else None,
+                "ph_y":      ph_y if is_last else None,
+            })
+ 
+    if not global_frames:
+        print("[VIZ] No valid paths to animate.")
+        return None
+ 
+    # Set up matplotlib figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.set_aspect("equal")
+    ax.set_axis_off()
+    ax.set_title("Disaster Relief — CSP + A* Agent", fontsize=13,
+                 fontweight="bold", pad=12)
+ 
+    # Draw edges once (static background)
+    for u, v in G.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        ax.plot([x0, x1], [y0, y1], "-", color="#aaaaaa", linewidth=1.5, zorder=1)
+ 
+    # Draw nodes as a scatter plot (colors updated each frame via set_facecolor)
+    xs = [pos[n][0] for n in node_list]
+    ys = [pos[n][1] for n in node_list]
+    scatter = ax.scatter(xs, ys, c=_node_color_list(0), s=900, zorder=4,
+                         edgecolors="#333333", linewidth=1.2)
+ 
+    # Draw node labels (static)
+    for n in node_list:
+        ax.text(pos[n][0], pos[n][1], n, ha="center", va="center",
+                fontsize=8, fontweight="bold", zorder=5)
+ 
+    # Axis bounds
+    xmin, xmax, ymin, ymax = graph_axis_limits(env)
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+ 
+    # Animated artists
+    (dot,)       = ax.plot([], [], "o",  color="#1c71d8", markersize=14, zorder=10)
+    (trail_line,)= ax.plot([], [], "-",  color="#1c71d8", alpha=0.4, linewidth=3, zorder=9)
+    (highlight,) = ax.plot([], [], "-",  color="#1c71d8", linewidth=4,
+                           alpha=0.65, zorder=8,
+                           solid_capstyle="round", solid_joinstyle="round")
+ 
+    status_box = ax.text(
+        0.02, 0.98, "", transform=ax.transAxes, fontsize=8,
+        verticalalignment="top", family="monospace", zorder=20,
+        bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
+                  edgecolor="#333333", alpha=0.92),
+    )
+ 
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elems = [
+        Patch(facecolor=NODE_COLORS["hub"],      label="Supply Hub"),
+        Patch(facecolor=NODE_COLORS["critical"],  label="Critical Zone"),
+        Patch(facecolor=NODE_COLORS["active"],    label="Active Zone"),
+        Patch(facecolor=NODE_COLORS["served"],    label="Served Zone"),
+        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#1c71d8",
+                   markersize=10, label="Truck"),
+    ]
+    ax.legend(handles=legend_elems, loc="lower right", fontsize=8, framealpha=0.9)
+ 
+    gxs = [f["x"] for f in global_frames]
+    gys = [f["y"] for f in global_frames]
+ 
+    # FuncAnimation
+    def init():
+        dot.set_data([], [])
+        trail_line.set_data([], [])
+        highlight.set_data([], [])
+        status_box.set_text("")
+        return dot, trail_line, highlight, status_box, scatter
+ 
+    def update(i):
+        frame = global_frames[i]
+ 
+        # Update zone node colors
+        scatter.set_facecolor(_node_color_list(frame["state_idx"]))
+ 
+        # Truck position
+        dot.set_data([frame["x"]], [frame["y"]])
+ 
+        # Fading trail
+        i0 = max(0, i - TRAIL_LEN + 1)
+        trail_line.set_data(gxs[i0: i + 1], gys[i0: i + 1])
+ 
+        # Path highlight on last frame of each dispatch
+        if frame["ph_x"] is not None:
+            highlight.set_data(frame["ph_x"], frame["ph_y"])
+        else:
+            highlight.set_data([], [])
+ 
+        status_box.set_text(frame["label"])
+        return dot, trail_line, highlight, status_box, scatter
+ 
+    anim = FuncAnimation(
+        fig, update, init_func=init,
+        frames=len(global_frames), interval=40,
+        blit=False, repeat=False,
+    )
+ 
+    plt.tight_layout()
+    plt.show()
+    return anim
+ 
+ 
 if __name__ == "__main__":
     from scenario import make_env
-
+ 
     env = make_env()
     if not env.trucks:
         raise SystemExit("No trucks in scenario — check trucks.csv and NUM_TRUCKS.")
-
+ 
     truck_id = sorted(env.trucks.keys())[0]
     path, tour_result = tour_path_from_simulation(env, truck_id)
     caption_footer: str | None = None
     plot_title: str | None = None
-
+ 
     if len(path) >= 2:
         caption_footer = _format_tour_caption(tour_result, truck_id)
         plot_title = f"Disaster Region — delivery tour ({truck_id})"
@@ -303,7 +538,7 @@ if __name__ == "__main__":
             "Fallback: single shortest hub→zone path (tour had no multi-stop route)."
         )
         plot_title = "Disaster Region — animated route (fallback)"
-
+ 
     # Slightly faster stepping when the tour visits many edges
     steps = 24 if len(path) > 25 else 32
     anim = animate_path(
@@ -316,4 +551,3 @@ if __name__ == "__main__":
         caption_footer=caption_footer,
     )
     plt.show()
-

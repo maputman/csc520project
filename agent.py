@@ -13,13 +13,22 @@ class DisasterReliefAgent:
       4. If a road blockage is detected mid-route, A* replans from the
          truck's current position.
       5. On arrival the truck delivers resources and the environment updates.
-      6. Repeat until all needs are met or the step limit is reached.
+      6. Any registered events for the new time step are fired.
+      7. Repeat until all needs are met or the step limit is reached.
     """
 
-    def __init__(self, env, max_steps=100, verbose=True):
+    def __init__(self, env, max_steps=100, verbose=True, events=None):
+        """
+        env       : DisasterEnvironment
+        max_steps : cap on planning cycles
+        verbose   : print step by step output
+        events    : dict mapping time_step -> list of callables(env)
+                    events fire after env.tick() advances to that time step
+        """
         self.env = env
         self.max_steps = max_steps
         self.verbose = verbose
+        self.events = events or {} # time_step -> [callable, ...]
 
         # metrics collected during the run
         self.metrics = {
@@ -83,6 +92,15 @@ class DisasterReliefAgent:
         env.tick()
         self.metrics["total_steps"] += 1
 
+        # fire any registered events for this time step
+        self._fire_events()
+
+    def _fire_events(self):
+        """fire any callables registered for the current time step"""
+        callbacks = self.events.get(self.env.time_step, [])
+        for callback in callbacks:
+            callback(self.env)
+
     def _execute_dispatch(self, truck, assignment):
         """
         Moves a truck along the A* path, handling mid-route replanning,
@@ -99,6 +117,9 @@ class DisasterReliefAgent:
             print(f"\n  [AGENT] Dispatching {truck.truck_id}: "
                   f"{hub.hub_id} -> {zone.zone_id} | "
                   f"{amt}x {rtype} | path: {' -> '.join(path)}")
+        
+        # capture critical status before delivery for metrics
+        was_critical = zone.is_critical()
 
         if amt > truck.capacity_per_resource:
             if self.verbose:
@@ -158,9 +179,10 @@ class DisasterReliefAgent:
                 remaining_path = new_path[1:]   # new path starts at truck's current node
 
             # Move one step
+            prev_node = truck.current_node
             truck.current_node = remaining_path.pop(0)
-            self.metrics["total_travel_cost"] += env.graph[edge[0]][truck.current_node]["weight"] \
-                if env.graph.has_edge(edge[0], truck.current_node) else 0
+            if env.graph.has_edge(prev_node, truck.current_node):
+                self.metrics["total_travel_cost"] += env.graph[prev_node][truck.current_node]["weight"]
 
         # --- Step 3: Deliver (zone may accept less than on truck due to hold caps) ---
         avail = truck._amount(rtype)
@@ -170,9 +192,11 @@ class DisasterReliefAgent:
 
         self.metrics["deliveries_made"] += 1
 
-        was_critical = zone.is_critical() if hasattr(zone, '_was_critical') else False
+        # check if zone is now fully served & update metrics
         if all(v == 0 for v in zone.needs.values()):
             self.metrics["zones_served"] += 1
+            if was_critical:
+                self.metrics["critical_zones_served"] += 1
             if self.verbose:
                 print(f"  [AGENT] ✓ Zone {zone.zone_id} fully served.")
 
@@ -192,6 +216,7 @@ class DisasterReliefAgent:
         print(f"  Steps taken        : {m['total_steps']}")
         print(f"  Deliveries made    : {m['deliveries_made']}")
         print(f"  Zones fully served : {m['zones_served']}")
+        print(f"  Critical zones served : {m['critical_zones_served']}")
         print(f"  Replan events      : {m['replan_events']}")
         print(f"  Failed deliveries  : {m['failed_deliveries']}")
         print(f"  Total travel cost  : {m['total_travel_cost']:.2f}")
