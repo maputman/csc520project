@@ -17,18 +17,22 @@ class DisasterReliefAgent:
       7. Repeat until all needs are met or the step limit is reached.
     """
 
-    def __init__(self, env, max_steps=100, verbose=True, events=None):
+    def __init__(self, env, max_steps=100, verbose=True, events=None, record_paths=False):
         """
         env       : DisasterEnvironment
         max_steps : cap on planning cycles
         verbose   : print step by step output
         events    : dict mapping time_step -> list of callables(env)
                     events fire after env.tick() advances to that time step
+        record_paths : if True, append each completed delivery's walked node list
+                       (hub→…→zone, including replans) to ``delivery_paths`` for viz.
         """
         self.env = env
         self.max_steps = max_steps
         self.verbose = verbose
         self.events = events or {} # time_step -> [callable, ...]
+        self.record_paths = record_paths
+        self.delivery_paths: list[dict] = []
 
         # metrics collected during the run
         self.metrics = {
@@ -152,6 +156,9 @@ class DisasterReliefAgent:
         truck.load(rtype, amt)
         truck.current_node = hub.hub_id
 
+        dispatch_time_step = env.time_step
+        visited_nodes: list[str] = [hub.hub_id] if self.record_paths else []
+
         # --- Step 2: Move truck step-by-step along the path ----------------
         remaining_path = path[1:]   # skip the starting hub node
         goal = zone.zone_id
@@ -183,6 +190,8 @@ class DisasterReliefAgent:
             truck.current_node = remaining_path.pop(0)
             if env.graph.has_edge(prev_node, truck.current_node):
                 self.metrics["total_travel_cost"] += env.graph[prev_node][truck.current_node]["weight"]
+            if self.record_paths:
+                visited_nodes.append(truck.current_node)
 
         # --- Step 3: Deliver (zone may accept less than on truck due to hold caps) ---
         avail = truck._amount(rtype)
@@ -202,6 +211,19 @@ class DisasterReliefAgent:
 
         if self.verbose:
             print(f"  [AGENT] Delivered {accepted}x {rtype} to {zone.zone_id}")
+
+        if self.record_paths and len(visited_nodes) >= 2:
+            self.delivery_paths.append(
+                {
+                    "time_step": dispatch_time_step,
+                    "truck_id": truck.truck_id,
+                    "path": list(visited_nodes),
+                    "resource": rtype,
+                    "zone_id": zone.zone_id,
+                    "hub_id": hub.hub_id,
+                    "amount": amt,
+                }
+            )
 
     # ------------------------------------------------------------------
     # Summary
