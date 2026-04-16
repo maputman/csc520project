@@ -1,11 +1,15 @@
 """
 Animated graph visualization for DisasterEnvironment.
 
-By default, runs a simulated multi-stop delivery tour (load at hub, visit zones
-until the truck is empty) on a copy of the scenario, then animates the full
-route on the original map. Run: python visualization.py
+Running this file (``python visualization.py``) uses the same CSP + A* replay as
+``python main.py visualize``: zones change color (critical / active / served),
+truck motion along planned routes, and a per-dispatch status line.
 
-Does not use CSP or A*.
+Scenario size (hubs, zones, trucks) comes from ``scenario.py`` (``NUM_HUBS``,
+``NUM_ZONES``, ``NUM_TRUCKS``) via ``make_env()``.
+
+Helper functions such as ``tour_path_from_simulation`` / ``animate_path`` are
+still available for tour-style demos if you call them from code.
 """
 
 from __future__ import annotations
@@ -275,6 +279,31 @@ def tour_path_from_simulation(env: DisasterEnvironment, truck_id: str) -> tuple[
     return result.get("full_node_path") or [], result
 
 
+def _expand_path_on_active_graph(env: DisasterEnvironment, path: list[str]) -> list[str]:
+    """
+    Ensure consecutive nodes are graph neighbors by splicing shortest paths on the
+    active (non-blocked) graph. Keeps the animation from drawing chords across the map.
+    """
+    if len(path) < 2:
+        return list(path)
+    G = env.get_active_graph()
+    out: list[str] = [path[0]]
+    for v in path[1:]:
+        u = out[-1]
+        if u == v:
+            continue
+        if G.has_edge(u, v):
+            out.append(v)
+            continue
+        if u not in G or v not in G or not nx.has_path(G, u, v):
+            # No valid road path between these nodes; stop the animated path here
+            # so the truck never appears to drive along a non-existent edge.
+            break
+        seg = nx.shortest_path(G, u, v, weight="weight")
+        out.extend(seg[1:])
+    return out
+
+
 def run_scenario_animation(env):
     """
     Run the CSP + A* agent on env and animate its decisions
@@ -289,37 +318,27 @@ def run_scenario_animation(env):
       - Status box showing the current CSP dispatch decision
       - Path highlight after each delivery completes
  
-    Uses a RecordingAgent to run the full simulation first, then
-    replays the recorded dispatch history as an animation.
+    Runs ``DisasterReliefAgent`` with ``record_paths=True`` so each leg uses the
+    **walked** hub→…→zone sequence (including A* replans), not the original planned
+    path alone — otherwise the dot can cut across non-edges after replanning.
     """
     import copy
     from agent import DisasterReliefAgent
- 
-    # Run agent on a deep copy and record every dispatch
+
     sim_env = copy.deepcopy(env)
-    dispatch_log = []   # one entry per delivery executed
- 
-    class _RecordingAgent(DisasterReliefAgent):
-        def _execute_dispatch(self, truck, assignment):
-            dispatch_log.append({
-                "time_step": self.env.time_step,
-                "truck_id":  truck.truck_id,
-                "path":      list(assignment.path),
-                "resource":  assignment.resource_type,
-                "zone_id":   assignment.zone.zone_id,
-                "hub_id":    assignment.hub.hub_id,
-                "amount":    assignment.amount,
-            })
-            super()._execute_dispatch(truck, assignment)
- 
     print("[VIZ] Running CSP + A* agent to record dispatch history...")
-    _RecordingAgent(sim_env, max_steps=50, verbose=False).run()
- 
+    agent = DisasterReliefAgent(
+        sim_env, max_steps=50, verbose=False, record_paths=True
+    )
+    agent.run()
+
+    dispatch_log = agent.delivery_paths
+
     if not dispatch_log:
         print("[VIZ] No dispatches recorded — nothing to animate")
         return None
- 
-    print(f"[VIZ] Recorded {len(dispatch_log)} dispatches — building animation...")
+
+    print(f"[VIZ] Recorded {len(dispatch_log)} delivery path(s) — building animation...")
  
     # Replay deliveries on a fresh copy to get zone snapshots
     # snapshots[i] = zone states AFTER dispatch i-1 (snapshots[0] = initial)
@@ -376,10 +395,10 @@ def run_scenario_animation(env):
     global_frames = []   # list of dicts
  
     for di, d in enumerate(dispatch_log):
-        path = d["path"]
+        path = _expand_path_on_active_graph(env, d["path"])
         if len(path) < 2:
             continue
- 
+
         # Interpolate (x,y) positions along path using node coordinates
         interp = []
         for i in range(len(path) - 1):
@@ -401,6 +420,7 @@ def run_scenario_animation(env):
             global_frames.append({
                 "x":         x,
                 "y":         y,
+                "dispatch":  di,
                 "state_idx": di + 1 if is_last else di,
                 "label":     label,
                 "ph_x":      ph_x if is_last else None,
@@ -486,8 +506,12 @@ def run_scenario_animation(env):
         # Truck position
         dot.set_data([frame["x"]], [frame["y"]])
  
-        # Fading trail
-        i0 = max(0, i - TRAIL_LEN + 1)
+        # Fading trail — only within the same dispatch leg so the line
+        # never stretches across non-existent edges between deliveries.
+        cur_dispatch = frame["dispatch"]
+        i0 = i
+        while i0 > 0 and (i - i0 + 1) < TRAIL_LEN and global_frames[i0 - 1]["dispatch"] == cur_dispatch:
+            i0 -= 1
         trail_line.set_data(gxs[i0: i + 1], gys[i0: i + 1])
  
         # Path highlight on last frame of each dispatch
@@ -512,42 +536,8 @@ def run_scenario_animation(env):
  
 if __name__ == "__main__":
     from scenario import make_env
- 
+
     env = make_env()
     if not env.trucks:
         raise SystemExit("No trucks in scenario — check trucks.csv and NUM_TRUCKS.")
- 
-    truck_id = sorted(env.trucks.keys())[0]
-    path, tour_result = tour_path_from_simulation(env, truck_id)
-    caption_footer: str | None = None
-    plot_title: str | None = None
- 
-    if len(path) >= 2:
-        caption_footer = _format_tour_caption(tour_result, truck_id)
-        plot_title = f"Disaster Region — delivery tour ({truck_id})"
-    else:
-        path = demo_path_for_env(env)
-        if len(path) < 2:
-            nh = sum(1 for _, d in env.graph.nodes(data=True) if d.get("type") == "hub")
-            nz = sum(1 for _, d in env.graph.nodes(data=True) if d.get("type") == "zone")
-            raise SystemExit(
-                f"No animation path: tour was empty (no cargo after load at hub?) and no "
-                f"hub→zone shortest path. Hubs={nh}, zones={nz}. Check CSVs / scenario limits."
-            )
-        caption_footer = (
-            "Fallback: single shortest hub→zone path (tour had no multi-stop route)."
-        )
-        plot_title = "Disaster Region — animated route (fallback)"
- 
-    # Slightly faster stepping when the tour visits many edges
-    steps = 24 if len(path) > 25 else 32
-    anim = animate_path(
-        env,
-        path,
-        steps_per_edge=steps,
-        interval_ms=28,
-        trail_length=22,
-        title=plot_title,
-        caption_footer=caption_footer,
-    )
-    plt.show()
+    run_scenario_animation(env)
