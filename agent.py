@@ -1,5 +1,7 @@
+import random
+
 from csp import solve_next_dispatch, print_csp_state
-from astar import replan, path_uses_edge
+from astar import astar, replan
 
 
 class DisasterReliefAgent:
@@ -17,7 +19,15 @@ class DisasterReliefAgent:
       7. Repeat until all needs are met or the step limit is reached.
     """
 
-    def __init__(self, env, max_steps=100, verbose=True, events=None, record_paths=False):
+    def __init__(
+        self,
+        env,
+        max_steps=100,
+        verbose=True,
+        events=None,
+        record_paths=False,
+        dynamic_roadblock_chance=0.0,
+    ):
         """
         env       : DisasterEnvironment
         max_steps : cap on planning cycles
@@ -25,13 +35,18 @@ class DisasterReliefAgent:
         events    : dict mapping time_step -> list of callables(env)
                     events fire after env.tick() advances to that time step
         record_paths : if True, append each completed delivery's walked node list
-                       (hub→…→zone, including replans) to ``delivery_paths`` for viz.
+                       (hub→...→zone, including replans) to ``delivery_paths`` for viz.
+        dynamic_roadblock_chance : probability before each move step of attempting to
+                       block an edge on the remaining route, but only if an alternate
+                       path still exists so replanning can be demonstrated.
         """
         self.env = env
         self.max_steps = max_steps
         self.verbose = verbose
         self.events = events or {} # time_step -> [callable, ...]
         self.record_paths = record_paths
+        self.dynamic_roadblock_chance = max(0.0, float(dynamic_roadblock_chance))
+        self._rng = random.Random(42)
         self.delivery_paths: list[dict] = []
 
         # metrics collected during the run
@@ -105,6 +120,40 @@ class DisasterReliefAgent:
         for callback in callbacks:
             callback(self.env)
 
+    def _maybe_trigger_dynamic_roadblock(self, truck, goal, remaining_path):
+        """
+        Occasionally block an edge on the truck's remaining route to trigger A* replanning.
+        Keep the blockage only if the destination is still reachable without that edge.
+        """
+        if self.dynamic_roadblock_chance <= 0 or len(remaining_path) < 2:
+            return
+        if self._rng.random() >= self.dynamic_roadblock_chance:
+            return
+
+        candidates = [
+            (truck.current_node, remaining_path[0]),
+            *list(zip(remaining_path[:-1], remaining_path[1:])),
+        ]
+        self._rng.shuffle(candidates)
+
+        for node_a, node_b in candidates:
+            if (node_a, node_b) in self.env.blocked_edges:
+                continue
+            if not self.env.graph.has_edge(node_a, node_b):
+                continue
+
+            self.env.block_road(node_a, node_b)
+            new_path, _ = astar(self.env, truck.current_node, goal)
+            if new_path:
+                if self.verbose:
+                    print(
+                        f"  [ENV] Dynamic blockage introduced on {node_a}<->{node_b} "
+                        f"while {truck.truck_id} is en route."
+                    )
+                return
+
+            self.env.unblock_road(node_a, node_b)
+
     def _execute_dispatch(self, truck, assignment):
         """
         Moves a truck along the A* path, handling mid-route replanning,
@@ -164,6 +213,7 @@ class DisasterReliefAgent:
         goal = zone.zone_id
 
         while remaining_path:
+            self._maybe_trigger_dynamic_roadblock(truck, goal, remaining_path)
             next_node = remaining_path[0]
             edge = (truck.current_node, next_node)
 
@@ -213,6 +263,13 @@ class DisasterReliefAgent:
             print(f"  [AGENT] Delivered {accepted}x {rtype} to {zone.zone_id}")
 
         if self.record_paths and len(visited_nodes) >= 2:
+            blocked_unique = sorted(
+                {
+                    tuple(sorted((a, b)))
+                    for (a, b) in env.blocked_edges
+                    if env.graph.has_edge(a, b)
+                }
+            )
             self.delivery_paths.append(
                 {
                     "time_step": dispatch_time_step,
@@ -222,6 +279,7 @@ class DisasterReliefAgent:
                     "zone_id": zone.zone_id,
                     "hub_id": hub.hub_id,
                     "amount": amt,
+                    "blocked_edges": blocked_unique,
                 }
             )
 
