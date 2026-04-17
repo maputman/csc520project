@@ -304,7 +304,7 @@ def _expand_path_on_active_graph(env: DisasterEnvironment, path: list[str]) -> l
     return out
 
 
-def run_scenario_animation(env):
+def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, max_steps=50):
     """
     Run the CSP + A* agent on env and animate its decisions
  
@@ -328,7 +328,12 @@ def run_scenario_animation(env):
     sim_env = copy.deepcopy(env)
     print("[VIZ] Running CSP + A* agent to record dispatch history...")
     agent = DisasterReliefAgent(
-        sim_env, max_steps=50, verbose=False, record_paths=True
+        sim_env,
+        max_steps=max_steps,
+        verbose=False,
+        events=events,
+        record_paths=True,
+        dynamic_roadblock_chance=dynamic_roadblock_chance,
     )
     agent.run()
 
@@ -356,6 +361,7 @@ def run_scenario_animation(env):
         return out
  
     snapshots = [_zone_states(snap_env)]
+    blocked_snapshots: list[list[tuple[str, str]]] = [[]]
     for d in dispatch_log:
         z = snap_env.zones.get(d["zone_id"])
         h = snap_env.hubs.get(d["hub_id"])
@@ -366,6 +372,7 @@ def run_scenario_animation(env):
                 pass
             z.update_needs(d["resource"], d["amount"])
         snapshots.append(_zone_states(snap_env))
+        blocked_snapshots.append(d.get("blocked_edges", blocked_snapshots[-1]))
  
     # Build per-node positions and color helpers
     G = env.graph
@@ -386,6 +393,16 @@ def run_scenario_animation(env):
             else NODE_COLORS.get(state.get(n, "active"), NODE_COLORS["active"])
             for n in node_list
         ]
+
+    def _blocked_polyline(state_idx):
+        edges = blocked_snapshots[min(state_idx, len(blocked_snapshots) - 1)]
+        xs: list[float] = []
+        ys: list[float] = []
+        for u, v in edges:
+            if u in pos and v in pos:
+                xs.extend([pos[u][0], pos[v][0], float("nan")])
+                ys.extend([pos[u][1], pos[v][1], float("nan")])
+        return xs, ys
  
     # Build global frame list
     # Each frame: truck position + which snapshot to show + status label
@@ -466,6 +483,17 @@ def run_scenario_animation(env):
     (highlight,) = ax.plot([], [], "-",  color="#1c71d8", linewidth=4,
                            alpha=0.65, zorder=8,
                            solid_capstyle="round", solid_joinstyle="round")
+    (blocked_line,) = ax.plot(
+        [],
+        [],
+        "-",
+        color="#e74c3c",
+        linewidth=4,
+        alpha=0.9,
+        zorder=7,
+        solid_capstyle="round",
+        solid_joinstyle="round",
+    )
  
     status_box = ax.text(
         0.02, 0.98, "", transform=ax.transAxes, fontsize=8,
@@ -481,6 +509,7 @@ def run_scenario_animation(env):
         Patch(facecolor=NODE_COLORS["critical"],  label="Critical Zone"),
         Patch(facecolor=NODE_COLORS["active"],    label="Active Zone"),
         Patch(facecolor=NODE_COLORS["served"],    label="Served Zone"),
+        plt.Line2D([0], [0], color="#e74c3c", linewidth=3, label="Blocked Road"),
         plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#1c71d8",
                    markersize=10, label="Truck"),
     ]
@@ -494,14 +523,17 @@ def run_scenario_animation(env):
         dot.set_data([], [])
         trail_line.set_data([], [])
         highlight.set_data([], [])
+        blocked_line.set_data([], [])
         status_box.set_text("")
-        return dot, trail_line, highlight, status_box, scatter
+        return dot, trail_line, highlight, blocked_line, status_box, scatter
  
     def update(i):
         frame = global_frames[i]
  
         # Update zone node colors
         scatter.set_facecolor(_node_color_list(frame["state_idx"]))
+        bx, by = _blocked_polyline(frame["state_idx"])
+        blocked_line.set_data(bx, by)
  
         # Truck position
         dot.set_data([frame["x"]], [frame["y"]])
@@ -521,7 +553,7 @@ def run_scenario_animation(env):
             highlight.set_data([], [])
  
         status_box.set_text(frame["label"])
-        return dot, trail_line, highlight, status_box, scatter
+        return dot, trail_line, highlight, blocked_line, status_box, scatter
  
     anim = FuncAnimation(
         fig, update, init_func=init,
@@ -535,9 +567,15 @@ def run_scenario_animation(env):
  
  
 if __name__ == "__main__":
+    from main import DYNAMIC_ROADBLOCK_CHANCE, register_events
     from scenario import make_env
 
     env = make_env()
     if not env.trucks:
         raise SystemExit("No trucks in scenario — check trucks.csv and NUM_TRUCKS.")
-    run_scenario_animation(env)
+    run_scenario_animation(
+        env,
+        events=register_events(env),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+        max_steps=50,
+    )
