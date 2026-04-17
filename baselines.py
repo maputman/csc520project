@@ -61,6 +61,7 @@ class GreedyBaseline(DisasterReliefAgent):
         if not idle:
             env.tick()
             self.metrics["total_steps"] += 1
+            self._fire_events()
             return
 
         n_slots = min(len(env.trucks), len(idle))
@@ -93,6 +94,7 @@ class GreedyBaseline(DisasterReliefAgent):
                 print("  [GREEDY] No valid dispatch — advancing time.")
             env.tick()
             self.metrics["total_steps"] += 1
+            self._fire_events()
             return
 
         pairs = list(zip(idle, assignments))
@@ -100,13 +102,28 @@ class GreedyBaseline(DisasterReliefAgent):
             self._execute_dispatch(truck, assignment)
         env.tick()
         self.metrics["total_steps"] += 1
+        self._fire_events()
 
 
 class RandomBaseline(DisasterReliefAgent):
     """Uniform random choice among CSP-feasible assignments each slot."""
 
-    def __init__(self, env, max_steps=100, verbose=True, seed=None):
-        super().__init__(env, max_steps=max_steps, verbose=verbose)
+    def __init__(
+        self,
+        env,
+        max_steps=100,
+        verbose=True,
+        seed=None,
+        events=None,
+        dynamic_roadblock_chance=0.0,
+    ):
+        super().__init__(
+            env,
+            max_steps=max_steps,
+            verbose=verbose,
+            events=events,
+            dynamic_roadblock_chance=dynamic_roadblock_chance,
+        )
         self._rng = random.Random(seed)
 
     def _planning_cycle(self):
@@ -115,6 +132,7 @@ class RandomBaseline(DisasterReliefAgent):
         if not idle:
             env.tick()
             self.metrics["total_steps"] += 1
+            self._fire_events()
             return
 
         n_slots = min(len(env.trucks), len(idle))
@@ -142,6 +160,7 @@ class RandomBaseline(DisasterReliefAgent):
                 print("  [RANDOM] No valid dispatch — advancing time.")
             env.tick()
             self.metrics["total_steps"] += 1
+            self._fire_events()
             return
 
         pairs = list(zip(idle, assignments))
@@ -149,3 +168,4 @@ class RandomBaseline(DisasterReliefAgent):
             self._execute_dispatch(truck, assignment)
         env.tick()
         self.metrics["total_steps"] += 1
+        self._fire_events()
