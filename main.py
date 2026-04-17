@@ -27,6 +27,8 @@ from scenario import make_env
 # Re-export so `from main import NUM_HUBS` still works if needed
 from scenario import NUM_HUBS, NUM_TRUCKS, NUM_ZONES  # noqa: F401
 
+DYNAMIC_ROADBLOCK_CHANCE = 0.08
+
 
 # ---------------------------------------------------------------------------
 # Optional: inject mid-simulation events to test dynamic replanning
@@ -61,7 +63,8 @@ def benchmark():
     env_agent = make_env()
     agent = DisasterReliefAgent(
         env_agent, max_steps=50, verbose=True,
-        events=register_events(env_agent)
+        events=register_events(env_agent),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
     )
     results["CSP + A*"] = agent.run()
 
@@ -70,7 +73,13 @@ def benchmark():
     print("  RUNNING: Greedy Baseline")
     print("#" * 60)
     env_greedy = make_env()
-    greedy = GreedyBaseline(env_greedy, max_steps=50, verbose=False)
+    greedy = GreedyBaseline(
+        env_greedy,
+        max_steps=50,
+        verbose=False,
+        events=register_events(env_greedy),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+    )
     results["Greedy"] = greedy.run()
 
     # ---- 3. Random baseline -----------------------------------------------
@@ -78,7 +87,14 @@ def benchmark():
     print("  RUNNING: Random Baseline")
     print("#" * 60)
     env_random = make_env()
-    rand = RandomBaseline(env_random, max_steps=50, seed=7, verbose=False)
+    rand = RandomBaseline(
+        env_random,
+        max_steps=50,
+        seed=7,
+        verbose=False,
+        events=register_events(env_random),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+    )
     results["Random"] = rand.run()
 
     # ---- Comparison table -------------------------------------------------
@@ -109,7 +125,13 @@ def benchmark():
 
 def demo():
     env = make_env()
-    agent = DisasterReliefAgent(env, max_steps=50, verbose=True, events=register_events(env))
+    agent = DisasterReliefAgent(
+        env,
+        max_steps=50,
+        verbose=True,
+        events=register_events(env),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+    )
     agent.run()
 
 
@@ -117,7 +139,13 @@ def visualize():
     """Open the graph animation for the same ``make_env()`` scenario as ``demo()``."""
     from visualization import run_scenario_animation
 
-    run_scenario_animation(make_env())
+    env = make_env()
+    run_scenario_animation(
+        env,
+        events=register_events(env),
+        dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+        max_steps=50,
+    )
 
 
 # ---------------------------------------------------------------------------
