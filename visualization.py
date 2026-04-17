@@ -304,6 +304,64 @@ def _expand_path_on_active_graph(env: DisasterEnvironment, path: list[str]) -> l
     return out
 
 
+def _show_run_summary_popup(
+    *,
+    metrics: dict,
+    total_zones: int,
+    total_trucks: int,
+    unique_blocked_edges: set[tuple[str, str]],
+    unserved_zone_ids: list[str],
+) -> None:
+    """Show a full-screen summary panel after animation playback completes."""
+    fig, ax = plt.subplots(figsize=(16, 10))
+    try:
+        manager = plt.get_current_fig_manager()
+        if hasattr(manager, "full_screen_toggle"):
+            manager.full_screen_toggle()
+    except Exception:
+        pass
+
+    ax.set_axis_off()
+    ax.set_title("Disaster Relief Run Summary", fontsize=28, fontweight="bold", pad=24)
+
+    zones_served = int(metrics.get("zones_served", 0))
+    total_steps = int(metrics.get("total_steps", 0))
+    deliveries = int(metrics.get("deliveries_made", 0))
+    replans = int(metrics.get("replan_events", 0))
+    failed = int(metrics.get("failed_deliveries", 0))
+    travel_cost = float(metrics.get("total_travel_cost", 0.0))
+
+    lines = [
+        f"Total steps (time): {total_steps}",
+        f"Total path cost: {travel_cost:.2f}",
+        f"Zones served: {zones_served} / {total_zones}",
+        f"Trucks active in scenario: {total_trucks}",
+        f"Deliveries made: {deliveries}",
+        f"Replan events: {replans}",
+        f"Failed deliveries: {failed}",
+        f"Blocked roads encountered (unique): {len(unique_blocked_edges)}",
+    ]
+    if unserved_zone_ids:
+        lines.append(f"Unserved zones: {', '.join(unserved_zone_ids)}")
+    else:
+        lines.append("Unserved zones: none (all served)")
+
+    body = "\n".join(lines)
+    ax.text(
+        0.5,
+        0.5,
+        body,
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        fontsize=20,
+        family="monospace",
+        bbox=dict(boxstyle="round,pad=0.8", facecolor="#f8f9fa", edgecolor="#333333", alpha=0.98),
+    )
+    plt.tight_layout()
+    plt.show()
+
+
 def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, max_steps=50):
     """
     Run the CSP + A* agent on env and animate its decisions
@@ -373,6 +431,11 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
             z.update_needs(d["resource"], d["amount"])
         snapshots.append(_zone_states(snap_env))
         blocked_snapshots.append(d.get("blocked_edges", blocked_snapshots[-1]))
+    unique_blocked_edges = {
+        tuple(edge)
+        for snapshot in blocked_snapshots
+        for edge in snapshot
+    }
  
     # Build per-node positions and color helpers
     G = env.graph
@@ -410,6 +473,12 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
     TRAIL_LEN = 16
  
     global_frames = []   # list of dicts
+    truck_ids = sorted({d["truck_id"] for d in dispatch_log})
+    palette = list(plt.get_cmap("tab10").colors) + list(plt.get_cmap("tab20").colors)
+    truck_colors = {
+        truck_id: palette[i % len(palette)]
+        for i, truck_id in enumerate(truck_ids)
+    }
  
     for di, d in enumerate(dispatch_log):
         path = _expand_path_on_active_graph(env, d["path"])
@@ -437,6 +506,7 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
             global_frames.append({
                 "x":         x,
                 "y":         y,
+                "truck_id":  d["truck_id"],
                 "dispatch":  di,
                 "state_idx": di + 1 if is_last else di,
                 "label":     label,
@@ -478,9 +548,10 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
     ax.set_ylim(ymin, ymax)
  
     # Animated artists
-    (dot,)       = ax.plot([], [], "o",  color="#1c71d8", markersize=14, zorder=10)
-    (trail_line,)= ax.plot([], [], "-",  color="#1c71d8", alpha=0.4, linewidth=3, zorder=9)
-    (highlight,) = ax.plot([], [], "-",  color="#1c71d8", linewidth=4,
+    default_truck_color = truck_colors[truck_ids[0]] if truck_ids else "#1c71d8"
+    (dot,)       = ax.plot([], [], "o",  color=default_truck_color, markersize=14, zorder=10)
+    (trail_line,)= ax.plot([], [], "-",  color=default_truck_color, alpha=0.4, linewidth=3, zorder=9)
+    (highlight,) = ax.plot([], [], "-",  color=default_truck_color, linewidth=4,
                            alpha=0.65, zorder=8,
                            solid_capstyle="round", solid_joinstyle="round")
     (blocked_line,) = ax.plot(
@@ -510,9 +581,19 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
         Patch(facecolor=NODE_COLORS["active"],    label="Active Zone"),
         Patch(facecolor=NODE_COLORS["served"],    label="Served Zone"),
         plt.Line2D([0], [0], color="#e74c3c", linewidth=3, label="Blocked Road"),
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor="#1c71d8",
-                   markersize=10, label="Truck"),
     ]
+    legend_elems.extend(
+        plt.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=truck_colors[tid],
+            markersize=9,
+            label=tid,
+        )
+        for tid in truck_ids
+    )
     ax.legend(handles=legend_elems, loc="lower right", fontsize=8, framealpha=0.9)
  
     gxs = [f["x"] for f in global_frames]
@@ -536,6 +617,10 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
         blocked_line.set_data(bx, by)
  
         # Truck position
+        truck_color = truck_colors.get(frame["truck_id"], default_truck_color)
+        dot.set_color(truck_color)
+        trail_line.set_color(truck_color)
+        highlight.set_color(truck_color)
         dot.set_data([frame["x"]], [frame["y"]])
  
         # Fading trail — only within the same dispatch leg so the line
@@ -563,6 +648,13 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
  
     plt.tight_layout()
     plt.show()
+    _show_run_summary_popup(
+        metrics=agent.metrics,
+        total_zones=len(sim_env.zones),
+        total_trucks=len(sim_env.trucks),
+        unique_blocked_edges=unique_blocked_edges,
+        unserved_zone_ids=sorted(z.zone_id for z in sim_env.get_unserved_zones()),
+    )
     return anim
  
  
