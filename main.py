@@ -14,8 +14,10 @@ Commands::
 
   python main.py              # CSP + A* agent (text)
   python main.py benchmark    # compare CSP vs baselines
-  python main.py visualize    # same CSV scenario as demo, matplotlib animation
+  python main.py visualize    # CSP + A*, matplotlib animation (same scenario as demo)
   python main.py viz          # alias for visualize
+  python main.py visualize greedy   # greedy baseline animation
+  python main.py visualize random  # random baseline animation (seed 7, same as benchmark)
 """
 
 from __future__ import annotations
@@ -148,14 +150,52 @@ def visualize():
     )
 
 
+def visualize_baseline(which: str):
+    """Matplotlib animation using a greedy or random baseline (same env as ``demo()``)."""
+    from visualization import run_scenario_animation
+
+    w = which.lower()
+    env = make_env()
+    if w in ("greedy", "g"):
+        run_scenario_animation(
+            env,
+            events=register_events(env),
+            dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+            max_steps=50,
+            agent_cls=GreedyBaseline,
+            run_label="Greedy baseline",
+            frame_label_prefix="[GREEDY]",
+        )
+    elif w in ("random", "rand", "r"):
+        run_scenario_animation(
+            env,
+            events=register_events(env),
+            dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
+            max_steps=50,
+            agent_cls=RandomBaseline,
+            agent_kwargs={"seed": 7},
+            run_label="Random baseline",
+            frame_label_prefix="[RANDOM]",
+        )
+    else:
+        raise SystemExit(
+            f"Unknown baseline {which!r}. Use greedy or random "
+            "(e.g. python main.py visualize greedy)."
+        )
+
+
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import sys
     cmd = sys.argv[1].lower() if len(sys.argv) > 1 else ""
+    sub = sys.argv[2].lower() if len(sys.argv) > 2 else ""
     if cmd == "benchmark":
         benchmark()
     elif cmd in ("visualize", "viz"):
-        visualize()
+        if sub in ("greedy", "g", "random", "rand", "r"):
+            visualize_baseline(sub)
+        else:
+            visualize()
     else:
         demo()
