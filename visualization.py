@@ -362,37 +362,54 @@ def _show_run_summary_popup(
     plt.show()
 
 
-def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, max_steps=50):
+def run_scenario_animation(
+    env,
+    *,
+    events=None,
+    dynamic_roadblock_chance=0.0,
+    max_steps=50,
+    agent_cls=None,
+    agent_kwargs=None,
+    run_label="CSP + A*",
+    frame_label_prefix="[CSP+A*]",
+    plot_title=None,
+):
     """
-    Run the CSP + A* agent on env and animate its decisions
- 
+    Run an agent on ``env`` and animate its deliveries.
+
+    By default runs ``DisasterReliefAgent`` (CSP + A*). Pass ``agent_cls`` (e.g.
+    ``GreedyBaseline`` or ``RandomBaseline`` from ``baselines``) and optional
+    ``agent_kwargs`` to visualize a baseline with the same animation pipeline.
+
     Shows:
-      - Trucks (blue dot) moving along A*-computed routes
+      - Trucks moving along A*-computed routes (per-truck colors when multiple trucks)
       - Zone node colors updating in real time:
           red   = critical zone (zero supply of a resource)
           orange = active zone (has unmet needs)
           green  = served zone (all needs met)
           blue   = supply hub
-      - Status box showing the current CSP dispatch decision
+      - Status box showing the current dispatch decision
       - Path highlight after each delivery completes
- 
-    Runs ``DisasterReliefAgent`` with ``record_paths=True`` so each leg uses the
+
+    The agent is constructed with ``record_paths=True`` so each leg uses the
     **walked** hub→…→zone sequence (including A* replans), not the original planned
     path alone — otherwise the dot can cut across non-edges after replanning.
     """
     import copy
     from agent import DisasterReliefAgent
 
+    if agent_cls is None:
+        agent_cls = DisasterReliefAgent
+    kw = dict(agent_kwargs or {})
+    if "verbose" not in kw:
+        kw["verbose"] = False
+    kw["record_paths"] = True
+    kw["events"] = events
+    kw["dynamic_roadblock_chance"] = dynamic_roadblock_chance
+
     sim_env = copy.deepcopy(env)
-    print("[VIZ] Running CSP + A* agent to record dispatch history...")
-    agent = DisasterReliefAgent(
-        sim_env,
-        max_steps=max_steps,
-        verbose=False,
-        events=events,
-        record_paths=True,
-        dynamic_roadblock_chance=dynamic_roadblock_chance,
-    )
+    print(f"[VIZ] Running {run_label} agent to record dispatch history...")
+    agent = agent_cls(sim_env, max_steps=max_steps, **kw)
     agent.run()
 
     dispatch_log = agent.delivery_paths
@@ -498,7 +515,7 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
  
         ph_x = [pos[n][0] for n in path]
         ph_y = [pos[n][1] for n in path]
-        label = (f"[CSP+A*] t={d['time_step']} | "
+        label = (f"{frame_label_prefix} t={d['time_step']} | "
                  f"{d['truck_id']}: {d['resource']} → {d['zone_id']}")
  
         for fi, (x, y) in enumerate(interp):
@@ -522,8 +539,9 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
     fig, ax = plt.subplots(figsize=(10, 8))
     ax.set_aspect("equal")
     ax.set_axis_off()
-    ax.set_title("Disaster Relief — CSP + A* Agent", fontsize=13,
-                 fontweight="bold", pad=12)
+    if plot_title is None:
+        plot_title = f"Disaster Relief — {run_label}"
+    ax.set_title(plot_title, fontsize=13, fontweight="bold", pad=12)
  
     # Draw edges once (static background)
     for u, v in G.edges():
@@ -659,15 +677,42 @@ def run_scenario_animation(env, *, events=None, dynamic_roadblock_chance=0.0, ma
  
  
 if __name__ == "__main__":
+    import sys
+
     from main import DYNAMIC_ROADBLOCK_CHANCE, register_events
     from scenario import make_env
 
     env = make_env()
     if not env.trucks:
         raise SystemExit("No trucks in scenario — check trucks.csv and NUM_TRUCKS.")
+
+    mode = (sys.argv[1].lower() if len(sys.argv) > 1 else "csp")
+    agent_kwargs = None
+    if mode in ("greedy", "g"):
+        from baselines import GreedyBaseline
+
+        agent_cls = GreedyBaseline
+        run_label = "Greedy baseline"
+        frame_label_prefix = "[GREEDY]"
+    elif mode in ("random", "rand", "r"):
+        from baselines import RandomBaseline
+
+        agent_cls = RandomBaseline
+        run_label = "Random baseline"
+        frame_label_prefix = "[RANDOM]"
+        agent_kwargs = {"seed": 7}
+    else:
+        agent_cls = None
+        run_label = "CSP + A*"
+        frame_label_prefix = "[CSP+A*]"
+
     run_scenario_animation(
         env,
         events=register_events(env),
         dynamic_roadblock_chance=DYNAMIC_ROADBLOCK_CHANCE,
         max_steps=50,
+        agent_cls=agent_cls,
+        agent_kwargs=agent_kwargs,
+        run_label=run_label,
+        frame_label_prefix=frame_label_prefix,
     )
