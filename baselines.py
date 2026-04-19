@@ -115,6 +115,7 @@ class RandomBaseline(DisasterReliefAgent):
         verbose=True,
         seed=None,
         events=None,
+        record_paths=False,
         dynamic_roadblock_chance=0.0,
     ):
         super().__init__(
@@ -122,6 +123,7 @@ class RandomBaseline(DisasterReliefAgent):
             max_steps=max_steps,
             verbose=verbose,
             events=events,
+            record_paths=record_paths,
             dynamic_roadblock_chance=dynamic_roadblock_chance,
         )
         self._rng = random.Random(seed)
