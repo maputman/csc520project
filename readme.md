@@ -2,7 +2,10 @@
 
 to install dependencies run this command in your terminal: pip install -r requirements.txt
 
-update number of trucks, zones, and hubs in scenario.py and then run python3 visualization.py to see the visualization
+update number of trucks, zones, and hubs in scenario.py and then run:
+CSP: python visualization.py
+Greedy: python visualization.py greedy
+Random: python visualization.py random
 
 
 DELETE AT THE END:
