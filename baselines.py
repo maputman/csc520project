@@ -49,10 +49,29 @@ def _valid_candidates(env, claimed: Set[str]) -> List[tuple]:
     return out
 
 
+def _shortest_path_cost(env, zone_id: str, hub_id: str) -> float:
+    """A* shortest-path weight hub→zone; +inf if unreachable (same as dispatch)."""
+    path, cost = path_for_dispatch(env, hub_id, zone_id)
+    if not path or math.isinf(cost):
+        return float("inf")
+    return float(cost)
+
+
 class GreedyBaseline(DisasterReliefAgent):
     """
-    Among CSP-feasible (hub, zone, resource) triples, prefer higher zone urgency,
-    then shorter straight-line hub–zone distance.
+    Among CSP-feasible (hub, zone, resource) triples, uses a **myopic** rule that
+    differs from the CSP agent:
+
+    CSP ranks by a weighted mix that puts **urgency first**, then distance and
+    hub inventory. This baseline is **proximity-only** for ordering among feasible
+    assignments: shortest **road** cost (A* on the current graph), then
+    straight-line hub–zone distance, then lexicographic tie-breakers. **Urgency
+    is not used** to rank candidates (only hard constraints, e.g. critical-first,
+    filter the feasible set).
+
+    That mimics a common greedy failure mode (minimize immediate driving while
+    under-serving the most urgent zones when cost and urgency disagree), so
+    benchmark gaps vs CSP + A* are usually visible.
     """
 
     def _planning_cycle(self):
@@ -72,10 +91,14 @@ class GreedyBaseline(DisasterReliefAgent):
             candidates = _valid_candidates(env, claimed)
             if not candidates:
                 break
+            # Proximity-only ordering (road cost, then euclidean); no urgency term.
             candidates.sort(
                 key=lambda c: (
-                    -env.zones[c[0]].urgency,
+                    _shortest_path_cost(env, c[0], c[1]),
                     euclidean_distance(env, c[1], c[0]),
+                    c[0],
+                    c[1],
+                    c[2],
                 ),
             )
             chosen = None
