@@ -16,15 +16,35 @@ from astar import path_for_dispatch
 from csp import DispatchAssignment, build_domain, euclidean_distance, passes_hard_constraints
 
 
-def _dispatch_amount(zone, resource_type: str) -> int:
+def _dispatch_amount(zone, hub, resource_type: str, max_amount: int = 10) -> int:
     need = int(zone.needs.get(resource_type, 0))
-    return min(1, need) if need > 0 else 0
+    stock = int(hub.inventory.get(resource_type, 0))
+    return min(need, stock, max_amount) if need > 0 else 0
 
 
-def _assignment_from_tuple(env, zone_id: str, hub_id: str, resource: str) -> DispatchAssignment | None:
+def _passes_greedy_constraints(assignment, env) -> bool:
+    """
+    Greedy-only feasibility check: HC2, HC3, HC4 only.
+    Deliberately omits HC1 (critical-first) so greedy ranks purely by proximity,
+    not by zone criticality. This is the key differentiator vs CSP.
+    """
+    zone_id, hub_id, resource = assignment
+    zone = env.zones[zone_id]
+    hub  = env.hubs[hub_id]
+    if not hub.can_dispatch(resource):       # HC2: hub must have stock
+        return False
+    if zone.needs.get(resource, 0) == 0:     # HC3: zone must need this resource
+        return False
+    if zone.served:                          # HC4: zone not already fully served
+        return False
+    return True
+
+
+def _assignment_from_tuple(env, zone_id: str, hub_id: str, resource: str, truck=None) -> DispatchAssignment | None:
     zone = env.zones[zone_id]
     hub = env.hubs[hub_id]
-    amount = _dispatch_amount(zone, resource)
+    max_amount = truck.capacity_per_resource if truck is not None else 10
+    amount = _dispatch_amount(zone, hub, resource, max_amount=max_amount)
     if amount <= 0:
         return None
     path, cost = path_for_dispatch(env, hub_id, zone_id)
@@ -44,7 +64,7 @@ def _valid_candidates(env, claimed: Set[str]) -> List[tuple]:
     for c in build_domain(env):
         if c[0] in claimed:
             continue
-        if passes_hard_constraints(c, env):
+        if _passes_greedy_constraints(c, env):
             out.append(c)
     return out
 
@@ -87,7 +107,7 @@ class GreedyBaseline(DisasterReliefAgent):
         claimed: Set[str] = set()
         assignments: List[DispatchAssignment] = []
 
-        for _ in range(n_slots):
+        for i in range(n_slots):
             candidates = _valid_candidates(env, claimed)
             if not candidates:
                 break
@@ -101,9 +121,10 @@ class GreedyBaseline(DisasterReliefAgent):
                     c[2],
                 ),
             )
+            truck = idle[i]
             chosen = None
             for cand in candidates:
-                da = _assignment_from_tuple(env, cand[0], cand[1], cand[2])
+                da = _assignment_from_tuple(env, cand[0], cand[1], cand[2], truck=truck)
                 if da is not None:
                     chosen = da
                     claimed.add(cand[0])
@@ -164,14 +185,15 @@ class RandomBaseline(DisasterReliefAgent):
         claimed: Set[str] = set()
         assignments: List[DispatchAssignment] = []
 
-        for _ in range(n_slots):
+        for i in range(n_slots):
             candidates = _valid_candidates(env, claimed)
             if not candidates:
                 break
             self._rng.shuffle(candidates)
+            truck = idle[i]
             chosen = None
             for cand in candidates:
-                da = _assignment_from_tuple(env, cand[0], cand[1], cand[2])
+                da = _assignment_from_tuple(env, cand[0], cand[1], cand[2], truck=truck)
                 if da is not None:
                     chosen = da
                     claimed.add(cand[0])

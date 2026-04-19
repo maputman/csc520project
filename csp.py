@@ -208,9 +208,10 @@ def print_csp_state(env) -> None:
     )
 
 
-def _dispatch_amount(zone, resource_type: str) -> int:
+def _dispatch_amount(zone, hub, resource_type: str, max_amount: int = 10) -> int:
     need = int(zone.needs.get(resource_type, 0))
-    return min(1, need) if need > 0 else 0
+    stock = int(hub.inventory.get(resource_type, 0))
+    return min(need, stock, max_amount) if need > 0 else 0
 
 
 def solve_next_dispatch(
@@ -224,14 +225,15 @@ def solve_next_dispatch(
     ``claimed_zones`` so different trucks target different zones when possible,
     build an A* path hub→zone, and return ``DispatchAssignment`` objects.
     """
-    n_slots = min(max_assignments, len(env.get_idle_trucks()))
+    idle_trucks = env.get_idle_trucks()
+    n_slots = min(max_assignments, len(idle_trucks))
     if n_slots <= 0:
         return []
 
     out: List[DispatchAssignment] = []
     claimed: set = set()
 
-    for _ in range(n_slots):
+    for i in range(n_slots):
         raw = solve_csp(env, claimed_zones=claimed, verbose=verbose)
         if not raw:
             break
@@ -239,7 +241,8 @@ def solve_next_dispatch(
         zone_id, hub_id, resource_type = raw
         zone = env.zones[zone_id]
         hub = env.hubs[hub_id]
-        amount = _dispatch_amount(zone, resource_type)
+        truck_cap = idle_trucks[i].capacity_per_resource
+        amount = _dispatch_amount(zone, hub, resource_type, max_amount=truck_cap)
         if amount <= 0:
             break
 

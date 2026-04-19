@@ -51,13 +51,14 @@ class DisasterReliefAgent:
 
         # metrics collected during the run
         self.metrics = {
-            "total_steps":        0,
-            "deliveries_made":    0,
-            "zones_served":       0,
+            "total_steps":           0,
+            "deliveries_made":       0,
+            "zones_served":          0,
             "critical_zones_served": 0,
-            "replan_events":      0,
-            "failed_deliveries":  0,
-            "total_travel_cost":  0.0,
+            "critical_cleared_step": None,  # step when last critical zone was served
+            "replan_events":         0,
+            "failed_deliveries":     0,
+            "total_travel_cost":     0.0,
         }
 
     # ------------------------------------------------------------------
@@ -73,7 +74,13 @@ class DisasterReliefAgent:
             self.env.print_status()
 
         while self.env.get_unserved_zones() and self.metrics["total_steps"] < self.max_steps:
+            critical_before = bool(self.env.get_critical_zones())
             self._planning_cycle()
+            # record the step the last critical zone transitioned from active to cleared
+            if (critical_before
+                    and not self.env.get_critical_zones()
+                    and self.metrics["critical_cleared_step"] is None):
+                self.metrics["critical_cleared_step"] = self.env.time_step
 
         self._print_summary()
         return self.metrics
@@ -171,8 +178,12 @@ class DisasterReliefAgent:
                   f"{hub.hub_id} -> {zone.zone_id} | "
                   f"{amt}x {rtype} | path: {' -> '.join(path)}")
         
-        # capture critical status before delivery for metrics
-        was_critical = zone.is_critical()
+        # mark zone as having been dispatched while actively critical (once set, stays True)
+        if zone.is_critical():
+            zone.dispatched_as_critical = True
+        # was_critical uses the persistent flag so subsequent deliveries to the same
+        # zone (after the critical resource was already delivered) are still counted
+        was_critical = zone.dispatched_as_critical
 
         if amt > truck.capacity_per_resource:
             if self.verbose:

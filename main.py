@@ -44,8 +44,8 @@ def register_events(env):
     return {
         2: [lambda e: e.block_road("H1", "Z1")],
         4: [lambda e: e.add_distress_call(
-                "Z6", x=4, y=7, urgency=8,
-                needs={"water": 0, "food": 2, "medical": 3},
+                "Z21", x=4, y=7, urgency=8,
+                needs={"water": 3, "food": 2, "medical": 3},
                 critical_resource="water")],
         6: [lambda e: e.unblock_road("H1", "Z1")],
     }
@@ -104,19 +104,26 @@ def benchmark():
     print(f"  {'METRIC':<28} {'CSP + A*':>10} {'Greedy':>10} {'Random':>10}")
     print("=" * 65)
     metrics_to_show = [
-        ("total_steps",       "Steps taken"),
-        ("deliveries_made",   "Deliveries made"),
-        ("zones_served",      "Zones fully served"),
-        ("replan_events",     "Replan events"),
-        ("failed_deliveries", "Failed deliveries"),
-        ("total_travel_cost", "Total travel cost"),
+        ("total_steps",            "Steps taken"),
+        ("deliveries_made",        "Deliveries made"),
+        ("zones_served",           "Zones fully served"),
+        ("critical_zones_served",  "Critical zones served"),
+        ("critical_cleared_step",  "Step: all critical cleared"),
+        ("replan_events",          "Replan events"),
+        ("failed_deliveries",      "Failed deliveries"),
+        ("total_travel_cost",      "Total travel cost"),
     ]
     for key, label in metrics_to_show:
         vals = {name: m.get(key, 0) for name, m in results.items()}
         row = f"  {label:<28}"
         for name in ["CSP + A*", "Greedy", "Random"]:
             v = vals[name]
-            row += f" {v:>10.2f}" if isinstance(v, float) else f" {v:>10}"
+            if v is None:
+                row += f" {'N/A':>10}"
+            elif isinstance(v, float):
+                row += f" {v:>10.2f}"
+            else:
+                row += f" {v:>10}"
         print(row)
     print("=" * 65)
 

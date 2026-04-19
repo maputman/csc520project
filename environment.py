@@ -52,6 +52,14 @@ class Zone:
         merged.update(needs)
         self.needs = merged
         self.stocked = {r: 0 for r in RESOURCE_TYPES}
+        # ever_critical: True if this zone was ever marked critical (permanent flag for metrics)
+        self.ever_critical = critical_resource is not None
+        # dispatched_as_critical: set True the first time a truck is dispatched while
+        # this zone is still is_critical()==True; used for critical_zones_served metric
+        self.dispatched_as_critical = False
+        # Auto-clear critical_resource if its need is already 0 (consistent state)
+        if critical_resource and merged.get(critical_resource, 0) == 0:
+            critical_resource = None
         self.critical_resource = critical_resource
         self.served = False
 
@@ -307,6 +315,23 @@ class DisasterEnvironment:
         zone = self.add_zone(
             zone_id, x, y, urgency, needs, critical_resource, **kwargs
         )
+        # Connect new zone to nearest existing node if it has no roads yet
+        if self.graph.degree(zone_id) == 0:
+            import math
+            other_nodes = [n for n in self.graph.nodes() if n != zone_id]
+            if other_nodes:
+                nearest = min(
+                    other_nodes,
+                    key=lambda n: math.hypot(
+                        self.graph.nodes[n]["x"] - x,
+                        self.graph.nodes[n]["y"] - y,
+                    ),
+                )
+                dist = math.hypot(
+                    self.graph.nodes[nearest]["x"] - x,
+                    self.graph.nodes[nearest]["y"] - y,
+                )
+                self.add_road(zone_id, nearest, cost=round(dist, 2))
         print(f"  [ENV] New distress call: {zone}")
         return zone
 
