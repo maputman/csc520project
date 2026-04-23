@@ -1,25 +1,15 @@
-# csc520 project
+# CSC520 Project
 
-to install dependencies run this command in your terminal: pip install -r requirements.txt
+This project simulates disaster-relief resource allocation across hubs and distress zones using a CSP + A* planning agent, with greedy and random baselines for comparison. It includes a matplotlib-based visualization so you can watch each strategy run on the same scenario.
 
-update number of trucks, zones, and hubs in scenario.py and then run:
-CSP: python visualization.py
-Greedy: python visualization.py greedy
-Random: python visualization.py random
+Install dependencies:
+`pip install -r requirements.txt`
 
+You can optionally adjust scenario size in `scenario.py` (`NUM_HUBS`, `NUM_ZONES`, `NUM_TRUCKS`), then run:
 
-DELETE AT THE END:
+Main demo visualization (CSP + A*):
+`python main.py visualize`
 
-
-(maddie)astar.py — astar(env, start, goal) runs A\* on the active (non-blocked) graph using Euclidean straight-line distance as the admissible heuristic.
-
-replan(env, truck, goal) re-runs A\* from the truck's current node when a road becomes blocked mid-route. path_uses_edge() detects whether a new blockage affects a truck in transit.
-
-(cynthia)csp_solver.py — Encodes all hard and soft constraints from your proposal. Hard constraints (HC1–HC4) are checked before any assignment is considered. Soft constraints (urgency, travel distance, hub inventory balance) are combined into a score and used to rank candidates. solve_next_dispatch() runs the backtracking search with constraint propagation and returns the best assignment(s).
-
-(maddie start) agent.py — The main simulation loop. Each cycle: CSP picks assignments → A\* routes trucks → trucks move step-by-step → blockages trigger replanning → delivery updates zone needs. Collects metrics throughout.
-
-baselines.py — GreedyBaseline (highest urgency → nearest hub, no constraint awareness) and RandomBaseline (random zone/hub/resource) for benchmarking.
-
-main.py — Run python main.py for a demo, or python main.py benchmark for a side-by-side comparison table of all three strategies.
-
+Baseline visualizations:
+- Greedy: `python main.py visualize greedy`
+- Random: `python main.py visualize random`
